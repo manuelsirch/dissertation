@@ -1,0 +1,1683 @@
+# --- Start of main.py ---
+
+import os
+
+import glob
+from PIL import Image
+
+import cellpose.plot
+import matplotlib.pyplot as plt
+import imagefunctions as imf
+import skimage.io
+from Cell import Cell
+from AdherentCell import AdherentCell
+import programrun_functions as prf
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"     # Suppress warning when program is run on different computer
+
+""" Run program for already created masks/diams, create new ones or run on test images to find parameters for cell 
+detection? """
+new_or_use_or_test = input("Create NEW masks, USE already created masks, run on TEST images, find masks/diams for \
+MULTIPLE data, determine CONFLUENCE or find adherent cells for FILTERED areas? \n[n / u / t / m / c / f]: ")
+
+# Create new masks:
+if new_or_use_or_test == "n":
+    # get images from user
+    path_input = input("Path of '.tif'-images: ")
+    imgs = imf.read_tifs(path_input)
+
+    # get parameters for cell detection from user
+    cellprob_threshold, flow_threshold = prf.get_celldet_params()
+
+    # create new directory for the data with the selected 'cellprob_threshold' and 'flow_threshold'
+    path_output_cells_diams = os.path.join(path_input, "celladhesion_" + 'cpt' + str(cellprob_threshold) + 'ft' + str(flow_threshold))
+    os.mkdir(path_output_cells_diams)
+
+    # run 'find_cells' method and save masks and diams (names: include 'cellprob_threshold' and 'flow_threshold')
+    masks, diams = Cell.run_cellpose(imgs, cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)
+    cells = Cell.find_cells(masks)
+    masks_name = 'masks_' + 'cpt' + str(cellprob_threshold) + 'ft' + str(flow_threshold)
+    Cell.safe_masks(masks, path_output_cells_diams, masks_name)
+    diams_name = 'diams_' + 'cpt' + str(cellprob_threshold) + 'ft' + str(flow_threshold)
+    Cell.safe_diams(diams, path_output_cells_diams, diams_name)
+
+    # get parameters for adherent-cell detection from user
+    time_for_adherent, delay, images_threshold, compare_threshold = prf.get_adhcelldet_params(diams)
+
+    # search adherent cells
+    number_adherent_cells, number_cells_total, adherent_cells = AdherentCell.find_adherent_cells(cells, diams,
+                                                                                                 images_threshold,
+                                                                                                 compare_threshold)
+    # find number of adherent cells on each image
+    nr_adherent_cells_on_img = AdherentCell.nr_adherent_cells_on_img(adherent_cells, len(imgs))
+
+    # create new subdirectory for data with the selected time and tolerance
+    path_output_adherent = os.path.join(path_output_cells_diams, 'time' + str(time_for_adherent) + 's_tolerance' + str(compare_threshold))
+    os.mkdir(path_output_adherent)
+
+    # create '.txt'-file to save data
+    txtfile = open(os.path.join(path_output_adherent, 'celladhesion_' + 'time' + str(time_for_adherent) + 's_tolerance'
+                                + str(compare_threshold) + '.txt'), 'w+')
+
+    # save the used masks, diams and parameters in the text file
+    prf.save_params_in_txtfile(txtfile, masks_name, diams_name, time_for_adherent, delay, images_threshold,
+                               compare_threshold)
+
+    # save the information found about the adherent cells in the text file
+    prf.save_adh_in_txtfile(txtfile, number_adherent_cells, number_cells_total, adherent_cells, cells,
+                            nr_adherent_cells_on_img)
+
+    # overlay outlines of the detected cells on the input images and mark the adherent cells
+    overlay = imf.overlay_outlines(imgs, masks)
+    # 'overlay_adherent_squares' can only be done if list contains 'adherent_cell'-objects
+    if isinstance(adherent_cells[0], AdherentCell):
+        overlay = imf.overlay_adherent_squares(overlay, adherent_cells, 30)
+
+    # show created images and save them in the subdirectory
+    prf.show_and_save_result_imgs(overlay, path_output_adherent, "celladhesion")
+
+# use already created masks
+elif new_or_use_or_test == "u":
+    # get images from user
+    path_imgs = input("Path of '.tif'-images: ").replace('\\', '/')
+    imgs = imf.read_tifs(path_imgs)
+
+    # get masks/diams from user
+    path_input = input("Path where masks and diams are saved: ").replace('\\', '/')
+    masks_name = str(input("Name of '.npy'-file with masks (without ending): ")) + '.npy'
+    masks = imf.load_masks(os.path.join(path_input, masks_name))
+    diams_name = str(input("Name of '.txt'-file with diameters (without ending): ")) + '.txt'
+    diams = imf.load_diams(os.path.join(path_input, diams_name))
+
+    while True:
+        # get parameters from user
+        time_for_adherent, delay, images_threshold, compare_threshold = prf.get_adhcelldet_params(diams)
+
+        # create new subdirectory for the data with the selected time and tolerance
+        path_output_adherent = os.path.join(path_input, 'time' + str(time_for_adherent) + 's_tolerance' + str(compare_threshold))
+        os.mkdir(path_output_adherent)
+
+        # find cells and adherent cells
+        cells = Cell.find_cells(masks)
+        number_adherent_cells, number_cells_total, adherent_cells = AdherentCell.find_adherent_cells(cells, diams,
+                                                                                                     images_threshold,
+                                                                                                     compare_threshold)
+        # find number of adherent cells on each image
+        nr_adherent_cells_on_img = AdherentCell.nr_adherent_cells_on_img(adherent_cells, len(imgs))
+
+        # create '.txt'-file to save the data
+        txtfile = open(os.path.join(path_output_adherent, 'celladhesion_' + 'time' + str(time_for_adherent) + 's_tolerance'
+                                    + str(compare_threshold) + '.txt'), 'w+')
+
+        # save the used masks, diams and parameters in the text file
+        prf.save_params_in_txtfile(txtfile, masks_name, diams_name, time_for_adherent, delay, images_threshold,
+                                   compare_threshold)
+
+        # save the found information about the adherent cells in the text file
+        prf.save_adh_in_txtfile(txtfile, number_adherent_cells, number_cells_total, adherent_cells, cells,
+                                nr_adherent_cells_on_img)
+
+        # save number of adherent cells on image in a '.csv'-file
+        prf.number_adh_on_image_to_csv(nr_adherent_cells_on_img, os.path.join(path_output_adherent, 'adh_on_img.csv'))
+
+        # overlay outlines of the detected cells on the input images and mark the adherent cells
+        overlay = imf.overlay_outlines(imgs, masks)
+        # 'overlay_adherent_squares' can only be done if list contains 'adherent_cell'-objects
+        if isinstance(adherent_cells[0], AdherentCell):
+            overlay = imf.overlay_adherent_squares(overlay, adherent_cells, 30)
+
+        # show created images and save them in the subdirectory
+        prf.show_and_save_result_imgs(overlay, path_output_adherent, "celladhesion")
+
+        # check if user wants to overlay the adherent cells on an image of the call layer
+        cells_on_phc = input("\nOverlay adherent cells on image of the cell layer? [y / n]: ")
+        if cells_on_phc == "y":
+
+            # get path and image of the cell layer
+            path_phc = input("Path where image of cell layer is saved: ").replace('\\', '/')
+            name_phc = str(input("Name of '.tif'-file of cell layer (without ending): ")) + '.tif'
+            img_phc = imf.read_single_img(os.path.join(path_phc, name_phc))
+
+            # create new subdirectory for the overlayed images
+            path_output_phc = os.path.join(path_output_adherent, 'celladhesion_overlayPhc')
+            os.mkdir(path_output_phc)
+
+            # overlay adherent cells on the image and save the result images in the directory
+            adh_over_phc = imf.adherent_cells_over_phasecontrast(img_phc, masks, adherent_cells)
+            prf.show_and_save_result_imgs(adh_over_phc, path_output_phc, "overlayPhc")
+
+            determine_confluence = input("\n Determine confluence of the cell layer? [y / n]: ")
+            if determine_confluence == "y":
+                # get new parameters for cell detection from user and find mask + confluence
+                print("\nSet new parameters for cell detection on the cell layer: ")
+                cellprob_threshold_layer, flow_threshold_layer = prf.get_celldet_params()
+                mask_layer, diams_layer = Cell.run_cellpose(img_phc, flow_threshold=flow_threshold_layer,
+                                                            cellprob_threshold=cellprob_threshold_layer)
+                confluence = Cell.determine_confluence(mask_layer)
+
+                # print and safe confluence
+                prf.save_confluence_in_txtfile(txtfile, cellprob_threshold_layer, flow_threshold_layer, confluence)
+
+                # set name for output image
+                name_output = name_phc
+                if name_output.endswith('.tif'):
+                    name_output = name_output[:-4]
+                # plot masks over image and show/save the result
+                img_output = cellpose.plot.mask_overlay(img_phc, mask_layer)
+                prf.show_and_save_result_imgs(img_output, path_phc, "confluence_" + str(confluence) + "_ "+ name_output)
+
+        # check if user wants to rerun or stop the program
+        rerun = input("Rerun? [y / n]: ")
+        # if no, break out of the loop to stop the program
+        if rerun == "n":
+            break
+        else:
+            # if yes, check if user wants to use the same masks as before or new ones
+            new_or_same_masks = input("Use NEW or SAME masks? [n / s]: ")
+            # if the user chooses new ones, get new images, masks and diameters
+            if new_or_same_masks == "n":
+                print("\n\n")
+                # get images from user
+                path_imgs = input("Path of '.tif'-images: ").replace('\\', '/')
+                imgs = imf.read_tifs(path_imgs)
+
+                # get masks/diams from user
+                path_input = input("Path where masks and diams are saved: ").replace('\\', '/')
+                masks_name = str(input("Name of '.npy'-file with masks (without ending): ")) + '.npy'
+                masks = imf.load_masks(os.path.join(path_input, masks_name))
+                diams_name = str(input("Name of '.txt'-file with diameters (without ending): ")) + '.txt'
+                diams = imf.load_diams(os.path.join(path_input, diams_name))
+
+
+# run on test images to find parameters for cell detection
+elif new_or_use_or_test == "t":
+    # get test-images from user
+    path_imgs = input("Path of '.tif' test-images: ").replace('\\', '/')
+    imgs = imf.read_tifs(path_imgs)
+
+    while True:
+        # get parameters for cell detection from user
+        cellprob_threshold, flow_threshold = prf.get_celldet_params()
+
+        # run 'find_cells' method, overlay cell outlines
+        masks, diams = Cell.run_cellpose(imgs, cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)
+        cells = Cell.find_cells(masks)
+        overlay = imf.overlay_outlines(imgs, masks)
+
+        # show images
+        for i in range(len(overlay)):
+            skimage.io.imshow(overlay[i])
+            plt.title("testimg{0},  cpt={1}, ft={2}          ".format(i, cellprob_threshold, flow_threshold))
+            skimage.io.show()
+
+        # check if user wants to rerun with different parameters
+        rerun = input("Rerun? [y / n]: ")
+        if rerun == "n":
+            break
+        else:
+            print("Set new parameters.")
+
+# Run Code to find masks and diams for multiple data inputs
+elif new_or_use_or_test == "m":
+    path_input = list()
+    imgs = list()
+    cellprob_threshold = list()
+    flow_threshold = list()
+    while True:
+        path_input_temp = input("Path of '.tif'-images or 'stop', if no more paths shall be read: ")
+        if path_input_temp == "stop":
+            break
+        path_input.append(path_input_temp)
+        imgs.append(imf.read_tifs(path_input_temp))
+        cellprob_threshold_temp, flow_threshold_temp = prf.get_celldet_params()
+        cellprob_threshold.append(cellprob_threshold_temp)
+        flow_threshold.append(flow_threshold_temp)
+        print("\n")
+
+    for data_nr in range(len(path_input)):
+        # create new directory for the data with the selected 'cellprob_threshold' and 'flow_threshold'
+        path_output_cells_diams = os.path.join(path_input[data_nr],
+                                               "celladhesion_" + 'cpt' + str(cellprob_threshold[data_nr]) + 'ft' + str(
+                                                   flow_threshold[data_nr]))
+        os.mkdir(path_output_cells_diams)
+
+        # run 'find_cells' method and save masks and diams (names: include 'cellprob_threshold' and 'flow_threshold')
+        masks, diams = Cell.run_cellpose(imgs[data_nr], cellprob_threshold=cellprob_threshold[data_nr],
+                                         flow_threshold=flow_threshold[data_nr])
+        masks_name = 'masks_' + 'cpt' + str(cellprob_threshold[data_nr]) + 'ft' + str(flow_threshold[data_nr])
+        Cell.safe_masks(masks, path_output_cells_diams, masks_name)
+        diams_name = 'diams_' + 'cpt' + str(cellprob_threshold[data_nr]) + 'ft' + str(flow_threshold[data_nr])
+        Cell.safe_diams(diams, path_output_cells_diams, diams_name)
+
+elif new_or_use_or_test == "c":
+    # get path and image of the cell layer
+    path_phc = input("Path where image of cell layer is saved: ").replace('\\', '/')
+    name_phc = str(input("Name of '.tif'-file of cell layer (without ending): ")) + '.tif'
+    # read cell layer image
+    img_phc = imf.read_single_img(os.path.join(path_phc, name_phc))
+
+    # get parameters for cell detection from user and find mask + confluence
+    cellprob_threshold, flow_threshold = prf.get_celldet_params()
+    mask, diam = Cell.run_cellpose(img_phc, flow_threshold=flow_threshold, cellprob_threshold=cellprob_threshold)
+    confluence = Cell.determine_confluence(mask)
+
+    # print confluence
+    print("confluence: {0}%".format(confluence))
+
+    # set name for output image
+    name_output = name_phc
+    if name_output.endswith('.tif'):
+        name_output = name_output[:-4]
+    # plot masks over image and show/save the result
+    img_output = cellpose.plot.mask_overlay(img_phc, mask)
+    prf.show_and_save_result_imgs(img_output, path_phc, "confluence_" + str(confluence) + "_ "+ name_output)
+
+
+elif new_or_use_or_test == "f":
+    path_imgs = input("Path of '.tif'-images: ").replace('\\', '/')
+    imgs = imf.read_tifs(path_imgs)
+
+    # get masks/diams from user
+    path_input = input("Path where masks and diams are saved: ").replace('\\', '/')
+    masks_name = str(input("Name of '.npy'-file with masks (without ending): ")) + '.npy'
+    masks = imf.load_masks(os.path.join(path_input, masks_name))
+    diams_name = str(input("Name of '.txt'-file with diameters (without ending): ")) + '.txt'
+    diams = imf.load_diams(os.path.join(path_input, diams_name))
+    #background_mask_name = str(input("Name of '.npy'-file with background masks (without ending): ")) + '.npy'
+    background_mask_name = str(input("Name of '.png'-file with background masks (without ending): ")) + '.png'
+    background_mask = skimage.io.imread(os.path.join(path_input, background_mask_name))
+    #background_mask = imf.load_masks(os.path.join(path_input, background_mask_name))
+
+    while True:
+        # get parameters from user
+        time_for_adherent, delay, images_threshold, compare_threshold = prf.get_adhcelldet_params(diams)
+
+        # create new subdirectory for the data with the selected time and tolerance
+        path_output_adherent = os.path.join(path_input,
+                                            'time' + str(time_for_adherent) + 's_tolerance' + str(compare_threshold) + '_filtered')
+        os.mkdir(path_output_adherent)
+
+        # find cells and adherent cells
+        cells = Cell.find_cells(masks)
+        filtered_cells = list()
+        for i in range(len(cells)):
+            filtered_cells.append(Cell.filter_for_position(cells[i], background_mask))
+        number_adherent_cells, number_cells_total, adherent_cells = AdherentCell.find_adherent_cells(filtered_cells, diams,
+                                                                                                     images_threshold,
+                                                                                                     compare_threshold)
+        # find number of adherent cells on each image
+        nr_adherent_cells_on_img = AdherentCell.nr_adherent_cells_on_img(adherent_cells, len(imgs))
+
+        # create '.txt'-file to save the data
+        txtfile = open(
+            os.path.join(path_output_adherent, 'celladhesion_' + 'time' + str(time_for_adherent) + 's_tolerance'
+                         + str(compare_threshold) + '.txt'), 'w+')
+
+        # save the used masks, diams and parameters in the text file
+        prf.save_params_in_txtfile(txtfile, masks_name, diams_name, time_for_adherent, delay, images_threshold,
+                                   compare_threshold)
+
+        # save the found information about the adherent cells in the text file
+        prf.save_adh_in_txtfile(txtfile, number_adherent_cells, number_cells_total, adherent_cells, cells,
+                                nr_adherent_cells_on_img)
+
+        # save number of adherent cells on image in a '.csv'-file
+        prf.number_adh_on_image_to_csv(nr_adherent_cells_on_img, os.path.join(path_output_adherent, 'adh_on_img.csv'))
+
+        # overlay outlines of the detected cells on the input images and mark the adherent cells
+        overlay = imf.overlay_outlines(imgs, masks)
+        # 'overlay_adherent_squares' can only be done if list contains 'adherent_cell'-objects
+        if isinstance(adherent_cells[0], AdherentCell):
+            overlay = imf.overlay_adherent_squares(overlay, adherent_cells, 30)
+
+        # show created images and save them in the subdirectory
+        prf.show_and_save_result_imgs(overlay, path_output_adherent, "celladhesion")
+
+        # check if user wants to overlay the adherent cells on an image of the call layer
+        cells_on_phc = input("\nOverlay adherent cells on image of the cell layer? [y / n]: ")
+        if cells_on_phc == "y":
+            # get path and image of the cell layer
+            path_phc = input("Path where image of cell layer is saved: ").replace('\\', '/')
+            name_phc = str(input("Name of '.tif'-file of cell layer (without ending): ")) + '.tif'
+            img_phc = imf.read_single_img(os.path.join(path_phc, name_phc))
+
+            # create new subdirectory for the overlayed images
+            path_output_phc = os.path.join(path_output_adherent, 'celladhesion_overlayPhc')
+            os.mkdir(path_output_phc)
+
+            # overlay adherent cells on the image and save the result images in the directory
+            adh_over_phc = imf.adherent_cells_over_phasecontrast(img_phc, masks, adherent_cells)
+            prf.show_and_save_result_imgs(adh_over_phc, path_output_phc, "overlayPhc")
+
+        # check if user wants to rerun or stop the program
+        rerun = input("Rerun? [y / n]: ")
+        # if no, break out of the loop to stop the program
+        if rerun == "n":
+            break
+        else:
+            # if yes, check if user wants to use the same masks as before or new ones
+            new_or_same_masks = input("Use NEW or SAME masks? [n / s]: ")
+            # if the user chooses new ones, get new images, masks and diameters
+            if new_or_same_masks == "n":
+                print("\n\n")
+                # get images from user
+                path_imgs = input("Path of '.tif'-images: ").replace('\\', '/')
+                imgs = imf.read_tifs(path_imgs)
+
+                # get masks/diams from user
+                path_input = input("Path where masks and diams are saved: ").replace('\\', '/')
+                masks_name = str(input("Name of '.npy'-file with masks (without ending): ")) + '.npy'
+                masks = imf.load_masks(os.path.join(path_input, masks_name))
+                diams_name = str(input("Name of '.txt'-file with diameters (without ending): ")) + '.txt'
+                diams = imf.load_diams(os.path.join(path_input, diams_name))
+
+
+# --- End of main.py ---
+
+# --- Start of AdherentCell.py ---
+
+import numpy as np
+
+from Cell import Cell
+
+
+class AdherentCell(Cell):
+    """
+    Subclass of Cell with extra attributes 'first_appearance' and 'number_appearances' needed for adherent adherent_cells
+    """
+    adherent_cellcounter = 0  # number of created 'AdherentCell'- objects
+
+    def __init__(self, pos, radius, first_appearance, number_appearances):
+        """
+
+        :param pos: array
+                1-dim array representing pixel positions x and y of cell center: [x, y] (x and y: int)
+        :param first_appearance: int
+                image number of first appearance; e.g. if image with first appearance is first image in the image
+                folder, first_appearance will be 0 (image is imgs[0])
+        :param number_appearances: int
+                number of consecutive images where adherent cell is detected
+        """
+        super().__init__(pos, radius)
+        self.__first_appearance = first_appearance
+        self.__number_appearances = number_appearances
+
+        AdherentCell.adherent_cellcounter += 1
+
+    def get_first_appearance(self):
+        return self.__first_appearance
+
+    def set_first_appearance(self, first_appearance):
+        self.__first_appearance = first_appearance
+
+    def get_number_appearances(self):
+        return self.__number_appearances
+
+    def set_number_appearances(self, number_appearances):
+        self.__number_appearances = number_appearances
+
+    @staticmethod
+    def reset_adherent_cellcounter():
+        AdherentCell.adherent_cellcounter = 0
+
+    @staticmethod
+    def get_adherent_cellcounter():
+        return AdherentCell.adherent_cellcounter
+
+    def __str__(self):
+        return "Pos.: {0}, Radius: {1}, Imgnr. first appearance: {2}, Nr. appearances: {3}".format(self.get_position(),
+                                                                                                   self.get_radius(),
+                                                                                      self.get_first_appearance(),
+                                                                                      self.get_number_appearances())
+
+    @staticmethod
+    def find_adherent_cells(cells, diams, threshold_imgs, tolerance):
+        """
+        Returns number of adherent adherent_cells (adherent_cells that hold their position on at least 'threshold_imgs'
+        consecutive images). Position of a cell is compared to the position, where the cell was first detected (rolling
+        cells may not be detected as adherent cells)
+
+        :param cells: list
+                    list containing cell objects for each image: list[img_index][cell_index]
+        :param diams: list
+                    list of cell diameters (float)
+        :param threshold_imgs: int, >=2
+                    number of consecutive images (for example threshold_imgs = 3, if cell needs to be in same position
+                    on three consecutive images)
+        :param tolerance: int
+                    tolerance radius for Cells.compare method
+
+        :return number_adherent_cells: int
+                    total number of adherent adherent_cells with given parameters
+        :return number_cells_total: int
+                    total number of adherent_cells
+        :return adherent_cells: list
+                    list of 'AdherentCell' objects
+        """
+        if threshold_imgs < 2:
+            print("threshold_imgs has to be greater than or equal to 2")
+            return "error", "error", "error"
+        """elif float(tolerance) > min(diams) / 2:
+            print("tolerance has to be smaller than estimated cell size")  # prevent overlapping of adherent_cells
+            return "error", "error", "error" """
+
+        AdherentCell.reset_adherent_cellcounter()   # reset adherent_cellcounter every time the method is called
+        number_adherent_cells = 0  # complete number of adherent adherent_cells
+        number_cells_total = 0  # complete number of adherent_cells
+
+        adherent_cells_doubles = list()  # auxiliary variable to prevent multiple counts for one cell
+        adherent_cells = list()          # list with 'AdherentCell'-objects
+
+        # iterate every image (ignore last image where no more new adherent adherent_cells can be found)
+        for img_number in range(len(cells) - 1):
+
+            # iterate every cell on image 'img_number'
+            for cell_number in range(len(cells[img_number])):
+                number_consecutive_imgs = 1  # auxiliary variable that represents number of images in which cell keeps its position
+
+                # prevent multiple counts for one cell by checking if it's already in 'adherent_cells_doubles'-list
+                if not (cells[img_number][cell_number] in adherent_cells_doubles):
+
+                    # iterate every image after 'image_number' to find adherent adherent_cells
+                    for check_img_number in range(img_number + 1, len(cells)):
+                        """Boolean used to make sure no more images are searched for  adherent_cells[img_number][cell_number] if 
+                        one image 'check_image_number' doesn't contain an adherent cell"""
+                        cell_found = False
+
+                        # iterate every cell on image 'check_img_number'
+                        for check_cell_number in range(len(cells[check_img_number])):
+
+                            # compare cell position
+                            if cells[img_number][cell_number].compare(cells[check_img_number][check_cell_number],
+                                                                      tolerance):
+                                """if true, raise 'number_consecutive_imgs' and add cell to 'adherent_cells_doubles' 
+                                (adherent_cells[check_img_number][check_cell_number] is same cell as the one on 
+                                image 'img_number' -> doesn't have to be counted twice)"""
+                                number_consecutive_imgs += 1
+                                adherent_cells_doubles.append(cells[check_img_number][check_cell_number])
+                                cell_found = True
+                                break
+                        if not cell_found:
+                            break  # no cell found on image 'check_img_number'
+                            # -> jump to next cell cell[img_number][cell_number]
+
+                # cell is only considered adherent, if it keeps position on at least 'threshold_imgs' images
+                if number_consecutive_imgs >= threshold_imgs:
+                    number_adherent_cells += 1
+                    adherent_cells.append(AdherentCell(cells[img_number][cell_number].get_position(),
+                                                       cells[img_number][cell_number].get_radius(), img_number,
+                                                       number_consecutive_imgs))
+
+        """calculate total number of adherent_cells by counting all cell objects and subtracting the doubled 
+        adherent_cells (saved in 'adherent_cells_doubles'-list)"""
+        for i in range(len(cells)):
+            for j in range(len(cells[i])):
+                number_cells_total += 1
+        number_cells_total -= len(adherent_cells_doubles)
+
+        if not adherent_cells:  # prevent ValueError if 'adherent_cells'-list is empty
+            return number_adherent_cells, number_cells_total, ["No adherent cells found"]
+        else:
+            return number_adherent_cells, number_cells_total, adherent_cells
+
+    @staticmethod
+    def find_adherent_cells2(cells, diams, threshold_imgs, tolerance, missing_cell_threshold=0):
+        """
+        Same as 'AdherentCell.find_adherent_cells', but with an optional parameter 'missing_cell_threshold'.
+        Returns number of adherent adherent_cells (adherent_cells that hold their position on at least 'threshold_imgs'
+        consecutive images). Position of a cell is compared to the position, where the cell was first detected (rolling
+        cells may not be detected as adherent cells)
+
+        :param cells: list
+                    list containing cell objects for each image: list[img_index][cell_index]
+        :param diams: list
+                    list of cell diameters (float)
+        :param threshold_imgs: int, >=2
+                    number of consecutive images (for example threshold_imgs = 3, if cell needs to be in same position
+                    on three consecutive images)
+        :param tolerance: int
+                    tolerance radius for Cells.compare method
+        :param missing_cell_threshold: int
+                    if one cell is not found on 'missing_cell_threshold' images, but on enough other consecutive images,
+                    the cell will still be detected as adherent
+
+        :return number_adherent_cells: int
+                    total number of adherent adherent_cells with given parameters
+        :return number_cells_total: int
+                    total number of adherent_cells
+        :return adherent_cells: list
+                    list of 'AdherentCell' objects
+        """
+        if threshold_imgs < 2:
+            print("threshold_imgs has to be greater than or equal to 2")
+            return "error", "error", "error"
+
+        AdherentCell.reset_adherent_cellcounter()  # reset adherent_cellcounter every time the method is called
+        number_adherent_cells = 0  # complete number of adherent adherent_cells
+        number_cells_total = 0  # complete number of adherent_cells
+
+        adherent_cells_doubles = list()  # auxiliary variable to prevent multiple counts for one cell
+        adherent_cells = list()  # list with 'AdherentCell'-objects
+
+        # iterate every image (ignore last image where no more new adherent adherent_cells can be found)
+        for img_number in range(len(cells) - 1):
+
+            # iterate every cell on image 'img_number'
+            for cell_number in range(len(cells[img_number])):
+                number_consecutive_imgs = 1  # auxiliary variable that represents number of images in which cell keeps its position
+
+                # prevent multiple counts for one cell by checking if it's already in 'adherent_cells_doubles'-list
+                if not (cells[img_number][cell_number] in adherent_cells_doubles):
+                    missing_cell_counter = 0
+
+                    # iterate every image after 'image_number' to find adherent adherent_cells
+                    for check_img_number in range(img_number + 1, len(cells)):
+                        """Boolean used to make sure no more images are searched for  adherent_cells[img_number][cell_number] if 
+                        one image 'check_image_number' doesn't contain an adherent cell"""
+                        cell_found = False
+
+                        # iterate every cell on image 'check_img_number'
+                        for check_cell_number in range(len(cells[check_img_number])):
+
+                            # compare cell position
+                            if cells[img_number][cell_number].compare(cells[check_img_number][check_cell_number],
+                                                                      tolerance):
+                                """if true, raise 'number_consecutive_imgs' and add cell to 'adherent_cells_doubles' 
+                                (adherent_cells[check_img_number][check_cell_number] is same cell as the one on 
+                                image 'img_number' -> doesn't have to be counted twice)"""
+                                number_consecutive_imgs += 1
+                                adherent_cells_doubles.append(cells[check_img_number][check_cell_number])
+                                cell_found = True
+                                break
+                        if not cell_found:
+                            missing_cell_counter += 1  # no cell found on image 'check_img_number'
+                        if missing_cell_counter > missing_cell_threshold:
+                            """ jump to next cell cell[img_number][cell_number], if number of images with a missing
+                                cell is greater than the missing_cell_threshold """
+                            break
+
+                            # cell is only considered adherent, if it keeps position on at least 'threshold_imgs' images
+                if number_consecutive_imgs >= threshold_imgs:
+                    number_adherent_cells += 1
+                    adherent_cells.append(AdherentCell(cells[img_number][cell_number].get_position(), img_number,
+                                                       number_consecutive_imgs))
+
+        """calculate total number of adherent_cells by counting all cell objects and subtracting the doubled 
+        adherent_cells (saved in 'adherent_cells_doubles'-list)"""
+        for i in range(len(cells)):
+            for j in range(len(cells[i])):
+                number_cells_total += 1
+        number_cells_total -= len(adherent_cells_doubles)
+
+        if not adherent_cells:  # prevent ValueError if 'adherent_cells'-list is empty
+            return number_adherent_cells, number_cells_total, ["No adherent cells found"]
+        else:
+            return number_adherent_cells, number_cells_total, adherent_cells
+
+    @staticmethod
+    def nr_adherent_cells_on_img(adherent_cells, nr_imgs):
+        """
+        Returns how many of the 'adherent_cells' are located on which image
+
+        :param adherent_cells: list
+                    list of 'AdherentCell' objects
+        :param nr_imgs: int
+                    total number of images
+
+        :return: nr_adherent_cells_on_img: array
+                    1-dim array where each element represents one image. 'int' value of element is the number of
+                    adherent cells on the image
+        """
+        # create 1-dim array where default number of adherent cells on each image is 0
+        nr_adherent_cells_on_img = np.zeros((nr_imgs,), dtype=int)
+
+        if adherent_cells:
+            for cell_number in range(len(adherent_cells)):      # iterate all adherent cells in 'adherent_cells' list
+                cell = adherent_cells[cell_number]              # simplify calling the cell
+                try:
+                    # iterate 'number_appearances'-attribute of the cell to count the appearances for all images
+                    for number_appearance in range(cell.get_number_appearances()):
+                        # raise the adherent cells counter for the respective image
+                        nr_adherent_cells_on_img[cell.get_first_appearance() + number_appearance] += 1
+                except:
+                    print("No adherent cells")
+
+        return nr_adherent_cells_on_img
+
+# --- End of AdherentCell.py ---
+
+# --- Start of Cell.py ---
+
+import os.path
+import cellpose.models
+import numpy as np
+import imagefunctions as imf
+
+
+class Cell:
+    """ Object 'Cell' for each mask returned by 'cellpose' representing one cell """
+    cellcounter = 0   # number of created 'Cell'-objects
+
+    def __init__(self, pos, radius):
+        """
+        creates Object 'Cell' with given parameters
+
+        :param pos: array
+                1-dim array representing pixel positions x and y of cell center: [x, y] (x and y: int)
+        :param radius: int
+                radius of the cell
+
+        """
+
+        self.__position = pos
+        self.__radius = radius
+
+        Cell.cellcounter += 1
+
+    def get_position(self):
+        return self.__position
+
+    def set_position(self, pos):
+        self.__position = pos
+
+    def get_radius(self):
+        return  self.__radius
+
+    def set_radius(self, radius):
+        self.__radius = radius
+
+    @staticmethod
+    def reset_cellcounter():
+        Cell.cellcounter = 0
+
+    @staticmethod
+    def get_cellcounter():
+        return Cell.cellcounter
+
+    def __str__(self):
+        return "Pos.: {0}, Radius: {1}".format(self.get_position(), self.get_radius())
+
+    @staticmethod
+    def calculate_radius(number_pixels):
+        # calculates the radius of an approximately round cell with an area of 'number_pixels'
+        return int(round(np.sqrt(number_pixels / np.pi)))
+
+
+    """   OLD VERSION
+    @staticmethod
+
+    def find_cells(imgs, flow_threshold=0.4, diameter=None, model_type='cyto'):
+        
+        Uses 'cellpose' to find masks on images 'imgs' where each mask represents one cell and returns
+        list of 'Cell' objects
+
+        :param imgs: list
+                containing 'ndarray' of each image
+        :param flow_threshold: float (optional, default 0.4)
+                flow error threshold (all adherent_cells with errors below threshold are kept)
+        :param diameter: float (optional, default None)
+                diameter for each image (only used if rescale is None),
+                if diameter is None, set to diam_mean
+        :param model_type: str (optional, default 'cyto')
+                'cyto'=cytoplasm model; 'nuclei'=nucleus model
+        :return adherent_cells: list
+                list containing cell objects for each image: list[img_index][cell_index]
+        
+
+
+            cellpose returns 'masks': list of 2D arrays; labelled 
+            image, where 0=no masks; 1,2,...=mask labels 
+        model = cellpose.models.Cellpose(gpu=False, model_type=model_type)
+        masks, flows, styles, diams = model.eval(imgs, diameter=None, channels=[0,0],
+                                         flow_threshold=0.4, do_3D=False)
+        masks = np.asarray(masks)
+
+        adherent_cells = list()
+
+        for img_index in range(masks.shape[0]):             # walk through all images in 'imgs'
+            cells_on_img = list()                           # temporary list object for each image
+            for cell_index in range(1, masks[img_index].max() + 1):     # iterate through all masks
+
+                x_tot = 0           # counter for pixel x-position to calculate center of cell
+                y_tot = 0           # counter for pixel y-position to calculate center of cell
+                pixel_counter = 0       # counter for overall pixel number
+                for y in range(masks[img_index].shape[0]):   # walk every pixel
+                    for x in range(masks[img_index].shape[1]):
+                        if masks[img_index][y][x] == cell_index:    # find pixels of each mask 'cell_index'
+                            x_tot += x
+                            y_tot += y
+                            pixel_counter += 1
+                x_center = int(round(x_tot / pixel_counter))    # calculate center
+                y_center = int(round(y_tot / pixel_counter))
+                pos = np.array([x_center, y_center])
+                cells_on_img.append(Cell(cell_index, pos))      # initialize Cell object with 'cell_index' and center position 'pos'
+            adherent_cells.append(cells_on_img)
+
+        return adherent_cells 
+    """
+
+
+    @staticmethod
+    def run_cellpose(imgs, flow_threshold=0.4, cellprob_threshold=0.0, diameter=None, model_type='cyto', min_size=15):
+        """ Uses Uses 'cellpose' to find masks on images 'imgs' where each mask represents one cell
+
+        :param imgs: list
+                containing 'ndarray' of each image
+        :param flow_threshold: float (optional, default 0.4)
+                flow error threshold (all adherent_cells with errors below threshold are kept)
+        :param cellprob_threshold: float (optional, default 0.0)
+                cell probability threshold (all pixels with prob above threshold kept for masks)
+        :param diameter: float (optional, default None)
+                diameter for each image (only used if rescale is None),
+                if diameter is None, set to diam_mean
+        :param model_type: str (optional, default 'cyto')
+                'cyto'=cytoplasm model; 'nuclei'=nucleus model
+        :param min_size: int
+                minimum number of pixels per mask, can turn off with -1
+
+        :return masks: list of 2D arrays; labelled
+                image, where 0=no masks; 1,2,...=mask labels
+        :return diams: list
+                list of cell diameters (float)
+        """
+
+        model = cellpose.models.Cellpose(gpu=False, model_type=model_type)
+        masks, flows, styles, diams = model.eval(imgs, diameter=diameter, channels=[0, 0],
+                                                 flow_threshold=flow_threshold,
+                                                 cellprob_threshold=cellprob_threshold, do_3D=False, min_size=min_size)
+        # change data types
+        masks = np.asarray(masks)
+        diams = [float(i) for i in diams]
+
+        return masks, diams
+
+    @staticmethod
+    def find_cells(masks):
+        """
+        Creates 'Cell' object for each cellpose mask and returns them as a list item
+
+       :param masks: list of 2D arrays; labelled
+                image, where 0=no masks; 1,2,...=mask labels
+
+        :return cells: list
+                list containing cell objects for each image: list[img_index][cell_index]
+        """
+
+        Cell.reset_cellcounter()  # reset cellcounter every time the method is called
+        cells = list()
+
+        for img_index in range(masks.shape[0]):             # walk through all images in 'imgs'
+            cells_on_img = list()                           # temporary list object for each image
+            number_of_cells = masks[img_index].max()        # number of cells (=highest mask label)
+            x_tot = np.zeros(number_of_cells + 1)           # arrays to calculate center of cell
+            y_tot = np.zeros(number_of_cells + 1)
+            pixel_counter = np.zeros(number_of_cells + 1)
+            for y in range(masks[img_index].shape[0]):      # walk every pixel
+                for x in range(masks[img_index].shape[1]):
+                    vap = masks[img_index][y][x]            # value at pixel
+
+                    # if mask-pixel, add position to 'y_tot' and 'x_total' , index is mask-label number
+                    if vap != 0:
+                        y_tot[vap] += y
+                        x_tot[vap] += x
+                        pixel_counter[vap] += 1
+
+            for i in range(1, number_of_cells + 1):         # create position array with center pos for each cell/mask
+                pos = np.array([int(round(x_tot[i] / pixel_counter[i])), int(round(y_tot[i] / pixel_counter[i]))])
+                radius = Cell.calculate_radius(pixel_counter[i])
+                cells_on_img.append(Cell(pos, radius))           # add to temporary list for each image
+            cells.append(cells_on_img)                      # add to complete cells list
+
+        return cells
+
+    def compare(self, cell2, tolerance):
+        """ Checks if position of two 'Cell'-objects match within given 'tolerance' radius:
+            equal if ((x2-x1)^2 + (y2-y1)^2 < tolerance^2)  """
+        return (cell2.get_position()[0] - self.get_position()[0]) ** 2 + \
+               (cell2.get_position()[1] - self.get_position()[1]) ** 2 <= tolerance ** 2
+
+    @staticmethod
+    def safe_masks(masks, path, filename):
+        """ Save 'masks' as a '.npy'-file under the name 'filename' at given 'path'
+        :param masks: list of 2D arrays
+        labelled image, where 0=no masks; 1,2,...=mask labels
+        :param path: string
+                Format: "...:/.../..."
+        :param filename: string
+                without '.npy' ending
+        """
+
+        masks_array = np.asarray(masks)
+        open(os.path.join(path, (filename + '.npy')), 'w+')     # create file
+        np.save(os.path.join(path, (filename + '.npy')), masks_array)
+
+    @staticmethod
+    def safe_diams(diams, path, filename):
+        """ Save 'diams' as a '.txt' file under the name 'filename' at given 'path'
+        :param diams: list
+                list of cell diameters (float)
+        :param path: string
+                Format: "...:/.../..."
+        :param filename: string
+                without '.txt' ending
+        """
+
+        txtfile = open(os.path.join(path, (filename + '.txt')), 'w+')
+        txtfile.write("\n".join(str(item) for item in diams))
+
+    @staticmethod
+    def determine_confluence(mask):
+        """
+        Determines the confluence (percentage of the surface of a culture dish that is covered by adherent cells) of the
+        cells, represented by the mask
+
+        :param mask: 2D array; labelled
+                image, where 0=no masks; 1,2,...=mask labels
+
+        :return confluence: int
+                confluence of cells on img, given in percent
+        """
+
+        pixels = 0              # total number of pixels
+        pixels_cells = 0        # number of pixels belonging to a cell (mask)
+
+        for y in range(mask.shape[0]):          # iterate whole image
+            for x in range(mask.shape[1]):
+                pixels += 1                     # count pixels
+                if mask[y][x] != 0:             # if mask pixel, increase pixel_cells counter
+                    pixels_cells += 1
+        confluence = round((pixels_cells / pixels) * 100)   # calculate confluence
+
+        return confluence
+
+    @staticmethod
+    def filter_for_position(cells, background_mask):
+        """
+        Filters an given 'cells' list, so that only those cells that have the same position as the cells on an
+        'background_mask' will remain. Use this function to consider cell adhesion only for those cells, that have a
+        certain position, determined by the background mask.
+
+        :param cells: list
+                list containing cell objects: list[cell_index]
+        :param background_mask: 2D array; labelled
+                image, where 0=no masks; 1,2,...=mask labels
+        :return: filtered_cells: list
+                list containing only the cells whose position matches the background mask
+
+        """
+
+        filtered_cells = list()     # new list for the results
+
+        for cell_nr in range(len(cells)):       # iterate all cells
+            cell = cells[cell_nr]               # simplify cell call
+            # check if the center of the cell already matches the background mask
+            if background_mask[cell.get_position()[1]][cell.get_position()[0]] != 0:
+                filtered_cells.append(cells[cell_nr])       # if yes, add the cell to the result list
+            else:
+                radius = cell.get_radius()      # simplify radius call
+                match_found = False             # used to make sure, each cell is added to 'filtered_cells' only once
+                # iterate over all pixels in a square around the cell (side length: 2 * cell_radius)
+                for y in range(cell.get_position()[1] - radius, cell.get_position()[1] + radius):
+                    for x in range(cell.get_position()[0] - radius, cell.get_position()[0] + radius):
+                        # prevent adding cell to 'filtered_cells' more than once
+                        if not match_found:
+                            # only check pixels of the actual cell (approx. circle with radius  of the cell)
+                            if (y - cell.get_position()[1]) ** 2 + (x - cell.get_position()[0]) ** 2 <= radius:
+                                # make sure the pixel is part of the background img (relevant for cells on edges of the img)
+                                if (0 <= y <= background_mask.shape[0]) and (0 <= x <= background_mask.shape[1]):
+                                    # if the position of the pixel matches a mask pixel, add the cell to list
+                                    if background_mask[y][x] != 0:
+                                        match_found = True
+                                        filtered_cells.append(cells[cell_nr])
+
+        return filtered_cells
+
+
+# --- End of Cell.py ---
+
+# --- Start of config.py ---
+
+"""Configuration file for the needed parameters"""
+
+# cell detection parameters for 'cellpose' functions
+celldet = {
+    "cellprob_threshold": 0.0,  # float: (between 0.0 and 1.0, higher: less masks will be found)
+    "flow_threshold": 0.4,      # float: (between 0.0 and 1.0, lower: less masks will be found)
+}
+
+# adherent cell detection parameters
+adhcelldet = {
+    "time_for_adherent[s]": 60,    # int or float: time [s] to be detected as adherent
+    "delay[s]": 30,                # int or float: delay [s] between images
+    "images_threshold": 3,
+    "tolerance": 10             # int: tolerance radius for comparing cell positions (pixels)
+}
+
+# --- End of config.py ---
+
+# --- Start of imagefunctions.py ---
+
+import skimage.io
+import skimage.segmentation
+import os
+import numpy as np
+import cv2
+import glob
+from natsort import os_sorted
+
+
+"""def read_tifs(folder):
+    
+    Reads '.tif'-files from the given folder
+    :param folder: folder directory (...:/.../.../)
+    :return: list containing ndarray of each '.tif'-file in the folder
+    
+    files = [os.path.join(root, filename)   # creates list of every filename
+             for root, dirs, files in os.walk(folder)
+             for filename in files
+             if filename.lower().endswith('.tif')]
+
+    imgs = [skimage.io.imread(f) for f in files]
+
+    return imgs"""
+
+
+def read_tifs(folder):
+    """
+    Reads '.tif'-files from the given folder
+    :param folder: folder directory (...:/.../.../)
+    :return: list containing ndarray of each '.tif'-file in the folder
+    """
+
+    # read the images and make sure the reading order is the same es the one in the windows explorer ('os_sorted()')
+    imgs = [skimage.io.imread(file) for file in os_sorted(glob.glob(os.path.join(folder, "*.tif")))]
+
+    return imgs
+
+
+def read_pngs(folder):
+    """
+     Reads '.png'-files from the given folder
+    :param folder: folder directory (...:/.../.../)
+    :return: list containing ndarray of each '.png'-file in the folder
+    """
+    # read the images and make sure the reading order is the same es the one in the windows explorer ('os_sorted()')
+    imgs = [skimage.io.imread(file) for file in os_sorted(glob.glob(os.path.join(folder, "*.png")), key=os.path.getmtime)]
+
+    return imgs
+
+
+def read_test_tifs():
+    """
+    Reads '.tif'-test-files from the test-folder
+    :return: list containing ndarray of each .'tif'-test-file in the folder
+    """
+    folder = 'C:/Users/woerl/Documents/Physik/WS 21-22/Bachelorarbeit/Python/celladheison/celladhesion/testimages'
+    files = [os.path.join(root, filename)
+             for root, dirs, files in os.walk(folder)
+             for filename in files
+             if filename.lower().endswith('.tif')]
+
+    imgs = [skimage.io.imread(f) for f in files]
+
+    return imgs
+
+
+def read_single_img(path):
+    # Read a single image from given path
+    img = skimage.io.imread(path)
+    return img
+
+
+def load_masks(path):
+    # load '.npy' masks from given path
+    masks = np.load(path, allow_pickle=True)
+    return masks
+
+
+def load_test_masks():
+    testmasks = np.load('testmasks.npy')
+    return testmasks
+
+
+def load_diams(path):
+    # load diameters from '.txt' file at given path
+    with open(path, 'r') as filehandle:
+        diams = [current_diam.rstrip() for current_diam in filehandle.readlines()]
+    return list(np.float_(diams))
+
+
+def load_test_diams():
+    # open file and read the content in a list
+    with open('testdiams.txt', 'r') as filehandle:
+        diams = [current_diam.rstrip() for current_diam in filehandle.readlines()]
+    return list(np.float_(diams))
+
+
+def overlay_outlines(imgs, masks):
+    """
+    Generates red outline overlay in 'imgs'
+
+    :param imgs: list
+                containing 'ndarray' of each image
+    :param masks: list of 2D arrays; labelled
+                image, where 0=no masks; 1,2,...=mask labels
+    :param colour: array
+                Float array with values from 0.0 to 1.0 for the three RGB channels
+    :return overlay: list of RGB images
+                RGB images with coloured outlines
+    """
+    if isinstance(imgs, list):
+        overlay = list()
+
+        for img_number in range(len(imgs)):     # iterate all images in 'imgs'
+            # Create outlines of the masks with 'find_boundaries' function from 'skimage' package:
+            outlines = skimage.segmentation.find_boundaries(masks[img_number], mode='outer').astype(np.uint8)
+            # Check if image is already RGB
+            if len(imgs[img_number].shape) != 3:
+                # convert image to RGB, divide by maximum value to show image in full range:
+                # img_rgb = np.stack((imgs[img_number] / imgs[img_number].max(),)*3, axis=-1)
+                img_rgb = np.stack((imgs[img_number],)*3, axis=-1)
+            else:
+                # img_rgb = imgs[img_number] / imgs[img_number].max()
+                img_rgb = imgs[img_number]
+            # iterate over every pixel and set colour of image to red, if pixel is part of an outline:
+            for y in range(masks[img_number].shape[0]):
+                for x in range(masks[img_number].shape[1]):
+                    if outlines[y][x] == 1:
+                        img_rgb[y][x] = [imgs[img_number].max(), 0, 0]
+            overlay.append(img_rgb)     # add new image with outlines to list
+        return overlay
+
+    else:
+        outlines = skimage.segmentation.find_boundaries(masks, mode='outer').astype(np.uint8)
+        # Check if image is already RGB
+        if len(imgs.shape) != 3:
+            # convert image to RGB, divide by maximum value to show image in full range:
+            img_rgb = np.stack((imgs / imgs.max(),) * 3, axis=-1)
+        else:
+            img_rgb = imgs / imgs.max()
+        # iterate over every pixel and set colour of image to red, if pixel is part of an outline:
+        for y in range(masks.shape[0]):
+            for x in range(masks.shape[1]):
+                if outlines[y][x] == 1:
+                    img_rgb[y][x] = [1.0, 0, 0]
+        overlay = img_rgb  # add new image with outlines to list
+    return overlay
+
+
+def overlay_adherent_squares(imgs, adherent_cells, square_length, colour=[0, 0.54, 0.27]):
+    length = int(square_length / 2)
+    imgs_rgb = list()
+    for img_number in range(len(imgs)):
+        # Check if image is already RGB
+        if len(imgs[img_number].shape) != 3:
+            # convert image to RGB, divide by maximum value to show image in full range:
+            # imgs_rgb.append(np.stack((imgs[img_number] / imgs[img_number].max(),) * 3, axis=-1))
+            imgs_rgb.append(np.stack((imgs[img_number],) * 3, axis=-1))
+        else:
+            imgs_rgb.append(imgs[img_number] / imgs[img_number].max())
+
+    for cell_number in range(len(adherent_cells)):
+        cell = adherent_cells[cell_number]
+        try:
+            pos = cell.get_position()
+            pos_top = [pos[0] - length, pos[1] - length]
+            pos_bottom = [pos[0] + length, pos[1] + length]
+            first_appearance = cell.get_first_appearance()
+            for consecutive_img_number in range(cell.get_number_appearances()):
+                # imgs_rgb[first_appearance + consecutive_img_number] = cv2.rectangle(imgs_rgb[first_appearance + consecutive_img_number], pos_top, pos_bottom, color)
+                imgs_rgb[first_appearance + consecutive_img_number] = cv2.circle(imgs_rgb[first_appearance + consecutive_img_number], pos, 40, colour)
+                """
+                for x_top in range(-length, length):
+                    imgs_rgb[first_appearance + concsecutive_img_number][pos[1] + length][pos[0] + x_top] = [0, 0.54, 0.27]
+                for x_bottom in range(-length, length):
+                    imgs_rgb[first_appearance + concsecutive_img_number][pos[1] - length][pos[0] + x_bottom] = [0, 0.54, 0.27]
+                for y in range(-length, length):
+                    imgs_rgb[first_appearance + concsecutive_img_number][pos[1] + y][pos[0] + length] = [0, 0.54, 0.27]
+                    
+                for y in range(-length, length):
+                    imgs_rgb[first_appearance + concsecutive_img_number][pos[1] + y][pos[0] - length] = [0, 0.54, 0.27]
+                """
+
+
+                """
+                for y in range(-5, 5):
+                    for x in range(-5, 5):
+                        imgs_rgb[first_appearance + concsecutive_img_number][pos[1] + y][pos[0] + x] = [0, 0.54, 0.27]
+                    """
+        except:
+            print("No adherent cells")
+
+    return imgs_rgb
+
+
+def time_to_nrimgs(time, delay):
+    return 1 + int(round(time/delay, 0))
+
+
+def filter_masks(masks, adherent_cells):
+    """
+    Filters the given masks for the adherent cells -> deletes all masks that do not belong to an adherent cell
+
+    :param masks: list of 2D arrays
+                labelled image, where 0=no masks; 1,2,...=mask labels
+    :param adherent_cells: list
+                list of 'AdherentCell' objects
+    :return: filtered_masks: list of 2D arrays
+                same as masks, but only contains the masks that belong to adherent cells
+    """
+
+    """for img_nr in range(len(masks)):
+        if adherent_cells[img_nr]:
+            pos = adherent_cells[img_nr][0].get_position()
+            mask_number = masks[img_nr][pos[0]][pos[1]]
+            adherent_mask_numbers[0] = mask_number
+            for cell_nr in range(1, len(adherent_cells[img_nr])):
+                pos = adherent_cells[img_nr][cell_nr].get_position()
+                mask_number = masks[img_nr][pos[0]][pos[1]]
+                adherent_mask_numbers.append(mask_number)
+        for y in range(masks[img_nr].shape[0]):
+            for x in range(masks[img_nr].shape[1]):
+                if masks[img_nr][y][x] not in adherent_mask_numbers:
+                    masks[img_nr][y][x] = 0
+    filtered_masks = masks"""
+
+    """zero_list = [0]
+    adherent_mask_numbers = list()
+    for i in range(len(masks)):
+        adherent_mask_numbers.append(zero_list)
+    print(adherent_mask_numbers)
+
+    for cell_number in range(len(adherent_cells)):
+        cell = adherent_cells[cell_number]
+        first_app = adherent_cells[cell_number].get_first_appearance()
+        pos = adherent_cells[cell_number].get_position()
+        for consecutive_img_number in range(cell.get_number_appearances()):
+            mask_nr = masks[first_app + consecutive_img_number][pos[1]][pos[0]]
+            adherent_mask_numbers[first_app + consecutive_img_number].append(mask_nr)"""
+
+    # create list where the mask numbers belonging to adherent cells for each image will be saved
+    adherent_mask_numbers = list()
+
+    # create copy of masks that will be edited
+    filtered_masks = masks
+
+    for img_nr in range(len(masks)):    # iterate all images/masks of all images
+        temp_list = [0]                 # temporary list to safe adherent mask numbers for one image
+        for cell_nr in range(len(adherent_cells)):  # iterate all adherent cells
+            cell = adherent_cells[cell_nr]
+            first_app = cell.get_first_appearance()
+            # iterate all appearances of an adherent cell
+            for consecutive_img_number in range(cell.get_number_appearances()):
+                # check, if the image number of the current appearance equals the image number (outer iteration)
+                if img_nr == first_app + consecutive_img_number:
+                    # if yes, get position of the adherent cell
+                    pos = cell.get_position()
+                    # get number (pixel value) of the related mask
+                    mask_nr = masks[first_app + consecutive_img_number][pos[1]][pos[0]]
+                    # add number to the temporary list
+                    temp_list.append(mask_nr)
+        # add temporary list to adherent_mask_numbers list
+        adherent_mask_numbers.append(temp_list)
+
+    # iterate all images
+    for img_nr in range(len(filtered_masks)):
+        # iterate all pixels on image
+        for y in range(filtered_masks[img_nr].shape[0]):
+            for x in range(filtered_masks[img_nr].shape[1]):
+                # if value at pixel (mask) does not belong to an adherent mask, delete the mask pixel (set value to 0)
+                if filtered_masks[img_nr][y][x] not in adherent_mask_numbers[img_nr]:
+                    filtered_masks[img_nr][y][x] = 0
+
+    return filtered_masks
+
+
+def adherent_cells_over_phasecontrast(phc_img, masks, adherent_cells, colour):
+    """
+    Overlays outlines only of the adherent cells on one single image
+
+    :param phc_img: ndarray
+                Image on which the outlines of the adherent cells will be plotted
+    :param masks: list of 2D arrays
+                labelled image, where 0=no masks; 1,2,...=mask labels
+    :param adherent_cells: list
+                list of 'AdherentCell' objects
+    :param colour: array
+                Float array with values from 0.0 to 1.0 for the three RGB channels
+    :return: adh_over_phc: list of RGB images
+                RGB images with red outline where adherent cells are located
+    """
+
+    adherent_masks = filter_masks(masks, adherent_cells)
+    imgs = list()
+    for i in range(len(masks)):
+        imgs.append(phc_img)
+    adh_over_phc = overlay_outlines(imgs, adherent_masks)
+
+    return adh_over_phc
+
+
+def background_mask_over_img(imgs, background_masks):
+    """
+    Overlays outlines of the background mask over the images
+
+    :param imgs: list
+                list of 2D images
+    :param background_masks: 2D array or list of 2d arrays
+                labelled image, where 0=no masks; 1,2,...=mask labels
+    :param colour: array
+                Float array with values from 0.0 to 1.0 for the three RGB channels
+    :return: background_over_img: list of RGB images
+                RGB images with coloured outlines
+    """
+    masks = list()
+    # if background mask is a list with more than one image
+    if (isinstance(background_masks, list)) and (len(background_masks) > 1):
+        masks = background_masks
+    # if background mask is a list with just one image
+    elif isinstance(background_masks, list):
+        for i in range(len(imgs)):
+            masks.append(background_masks[0])
+    # if background mask is a single image
+    else:
+        for i in range(len(imgs)):
+            masks.append(background_masks)
+
+    background_over_img = overlay_outlines(imgs, masks)
+
+    return background_over_img
+
+
+def find_intensity_complete(img):
+    """
+    Determines the intensity of all pixel values of an given image
+
+    :param img: ndarray
+            image of which the intensity shall be determined
+    :return: intensity: float
+            intensity of the picture
+    """
+    pixels = 0  # total number of pixels
+    intensity_counter = np.float64(0)   # total intensity of all pixels
+
+    for y in range(img.shape[0]):   # iterate image
+        for x in range(img.shape[1]):
+            intensity_counter += img[y][x]  # raise value of the intensity by the value of the pixel
+            pixels += 1     # raise pixel counter
+
+    intensity = round(intensity_counter / pixels, 2)   # calculate intensity, normalized with the total number of pixels
+    return intensity
+
+
+def find_intensity_mask(img, background_mask):
+    """
+    Determines the intensities of those pixels on an image, that match with the pixels of an background mask
+    :param img: ndarray
+            image of which the intensity shall be determined
+    :param background_mask: 2D array
+            labelled image, where 0=no masks; 1,2,...=mask labels
+    :return: intensities: dictionary
+            dictionary that contains the intensity (float) of all pixels matching a mask, the intensity of all the other pixels
+            and the confluence (percentage of the image surface covered by masks). Key words: "mask", "rest",
+            "confluence"
+    """
+
+    pixels_mask = 0     # variable to count the number of mask pixels
+    pixels_rest = 0     # variable to count all other pixels
+    intensity_mask_counter = np.float64(0)  # total intensity of mask pixels
+    intensity_rest_counter = np.float64(0)  # total intensity of other pixels
+
+    for y in range(img.shape[0]):   # iterate image
+        for x in range(img.shape[1]):
+            if background_mask[y][x] != 0:  # mask pixel, if value is not zero
+                intensity_mask_counter += img[y][x]     # -> raise total mask intensity
+                pixels_mask += 1    # -> raise mask pixel counter
+            else:   # else: no mask pixel
+                intensity_rest_counter += img[y][x]     # -> raise rest mask intensity
+                pixels_rest += 1    # -> raise rest pixel counter
+
+    # calculate intensity (normalized with the total number of pixels) of the mask and rest pixels
+    intensity_mask = round(intensity_mask_counter / pixels_mask, 2)
+    intensity_rest = round(intensity_rest_counter / pixels_rest, 2)
+    # calculate confluence of the background mask
+    confluence = round((pixels_mask / (pixels_mask + pixels_rest)) * 100)
+
+    # save values in a dictionary
+    intensities = {"mask": intensity_mask, "rest": intensity_rest, "confluence": confluence}
+
+    return intensities
+
+
+def find_intensity(imgs, background_mask=None):
+    """
+    Determines the intensities of one or more images. If an image with a background mask is handed over, the intensities
+    of those pixels on the images, that match with the pixels of the background mask, are calculated separately.
+    The function uses 'find_intensity_complete' and 'find_intensity_mask' functions to do so.
+
+    :param imgs: list or ndarray
+            list containing 'ndarray' of each image ore one single ndarray
+    :param background_mask: 2D array or list of 2d arrays
+            labelled image, where 0=no masks; 1,2,...=mask labels
+    :return: intensity: float or dictionary
+            intensity value (for single image input) or list of intensity values (for multiple image input)
+            If a background mask is used, the intensity is a dictionary that contains the intensity (float) of all
+            pixels matching a mask, the intensity of all the other pixels and the confluence (percentage of the image
+            surface covered by masks). Key words: "mask", "rest", "confluence".
+            Otherwise, the intensity is a single float value.
+    """
+    # version without background mask
+    if background_mask is None:
+        # multiple images
+        if isinstance(imgs, list):
+            intensities = list()    # list needed for multiple images
+            for img_nr in range(len(imgs)):     # find intensity for every image
+                intensities.append(find_intensity_complete(imgs[img_nr]))
+            return intensities
+        # single image
+        else:
+            intensity = find_intensity_complete(imgs)   # find intensity for single image
+            return intensity
+    # version with background mask
+    else:
+        # multiple images
+        if isinstance(imgs, list):
+            intensities = list()    # list needed for multiple images
+            for img_nr in range(len(imgs)):
+                # if function gets a list of background_masks (one for every image): use the specific background_mask[img_nr]
+                if (isinstance(background_mask, list)) and (len(background_mask) > 1):
+                    intensities.append(find_intensity_mask(imgs[img_nr], background_mask[img_nr]))
+                # otherwise use the same background mask for every image
+                else:
+                    intensities.append(find_intensity_mask(imgs[img_nr], background_mask[0]))
+            return intensities
+        # single image
+        else:
+            intensity = find_intensity_mask(imgs, background_mask)
+            return intensity
+
+
+# --- End of imagefunctions.py ---
+
+# --- Start of programrun_functions.py ---
+
+import json
+
+import imagefunctions as imf
+from AdherentCell import AdherentCell
+import skimage.io
+import os.path
+import csv
+import config
+
+
+def change_celldet_params():
+    """ Changes the cell detection parameters in the config file"""
+
+    # load the current configuration
+    with open("config.json", "r") as jsonFile:
+        config = json.load(jsonFile)
+
+    while True:
+        try:
+            config["celldet"]["cellprob_threshold"] = float(input("cellprob_threshold (between 0.0 and 1.0, higher: less masks will be found): "))
+            break
+        except ValueError:
+            print("cellprob_threshold not valid")
+    while True:
+        try:
+            config["celldet"]["flow_threshold"] = float(input("flow_threshold (between 0.0 and 1.0, lower: less masks will be found): "))
+            break
+        except ValueError:
+            print("flow_threshold not valid")
+
+    # write the new parameters to the config file
+    with open("config.json", "w") as jsonFile:
+        json.dump(config, jsonFile)
+    jsonFile.close()
+
+
+def change_adhcelldet_params():
+    """ Changes the cell detection parameters in the config file"""
+
+    # load the current configuration
+    with open("config.json", "r") as jsonFile:
+        config = json.load(jsonFile)
+
+    while True:
+        try:
+            config["adhcelldet"]["time_for_adherent[s]"] = float(input("time [s] to be detected as adherent: "))
+            break
+        except ValueError:
+            print("time not valid")
+    while True:
+        try:
+            config["adhcelldet"]["delay[s]"] = float(input("delay [s] between images: "))
+            break
+        except ValueError:
+            print("delay not valid")
+
+    config["adhcelldet"]["images_threshold"] = imf.time_to_nrimgs(config["adhcelldet"]["time_for_adherent[s]"],
+                                                               config["adhcelldet"]["delay[s]"])
+    while True:
+        try:
+            config["adhcelldet"]["tolerance"] = int(input("tolerance radius for comparing cell positions: "))
+            break
+        except ValueError:
+            print("tolerance radius not valid")
+
+    # write the new parameters to the config file
+    with open("config.json", "w") as jsonFile:
+        json.dump(config, jsonFile)
+    jsonFile.close()
+
+
+"""def get_celldet_params():
+    # get parameters for cell detection from user
+    while True:
+        try:
+            cellprob_threshold = float(input("cellprob_threshold (between 0.0 and 1.0, higher: less masks will be found): "))
+            break
+        except ValueError:
+            print("cellprob_threshold not valid")
+    while True:
+        try:
+            flow_threshold = float(input("flow_threshold (between 0.0 and 1.0, lower: less masks will be found): "))
+            break
+        except ValueError:
+            print("flow_threshold not valid")
+    return cellprob_threshold, flow_threshold"""
+
+
+"""def get_adhcelldet_params(diams):
+    # get parameters for adherent-cell detection from user
+    while True:
+        try:
+            time_for_adherent = float(input("time [s] to be detected as adherent: "))
+            break
+        except ValueError:
+            print("time not valid")
+    while True:
+        try:
+            delay = float(input("delay [s] between images: "))
+            break
+        except ValueError:
+            print("delay not valid")
+    images_threshold = imf.time_to_nrimgs(time_for_adherent, delay)
+    while True:
+        try:
+            """"""compare_threshold = int(input(
+                "tolerance radius for comparing cell positions: ".format(
+                    min(diams) / 2)))""""""
+            compare_threshold = int(input("tolerance radius for comparing cell positions: "))
+            break
+        except ValueError:
+            print("tolerance radius not valid")
+
+    return time_for_adherent, delay, images_threshold, compare_threshold"""
+
+
+"""def save_params_in_txtfile(txtfile, masks_name, diams_name, time_for_adherent, delay, images_threshold,
+                           compare_threshold):
+    # save the used masks, diams and parameters in the text file
+    txtfile.write("masks={0}, diams={1}, time_for_adherent[s]={2}, delay[s]={3}, images_threshold={4}, \
+    tolerance={5}\n".format(masks_name, diams_name, time_for_adherent, delay, images_threshold, compare_threshold))"""
+
+
+def save_config_in_txtfile(txtfile, masks_name, diams_name, config):
+    # save the used masks, diams and parameters in the text file
+    txtfile.write("masks={0}, diams={1}\n".format(masks_name, diams_name))
+    txtfile.write("Cell detection parameters:")
+    txtfile.write(str(config["celldet"]))
+    txtfile.write("\nAdherent Cell detection parameters:")
+    txtfile.write(str(config["adhcelldet"]))
+    txtfile.write("\n__________________________________________________________________________________________\n\n")
+
+
+def save_adh_in_txtfile(txtfile, number_adherent_cells, number_cells_total, adherent_cells, cells,
+                        nr_adherent_cells_on_img):
+    # save the information found about the adherent cells in the text file
+    # number adherent cells
+    print("Number adherent cells: ", number_adherent_cells)
+    txtfile.write("Number adherent cells: {0}\n".format(number_adherent_cells))
+
+    # number cells total
+    print("Number cells total: ", number_cells_total)
+    txtfile.write("Number cells total: {0}\n".format(number_cells_total))
+
+    # number generated Cell objects
+    cellcounter = 0
+    for img_nr in range(len(cells)):
+        for cell_nr in range(len(cells[img_nr])):
+            cellcounter += 1
+    print("Number generated Cell objects: {0}".format(cellcounter))
+    txtfile.write("Number generated Cell objects: {0}\n\n".format(cellcounter))
+
+    # number cells on first image
+    print("\nNumber cells on first image: {0}".format(len(cells[0])))
+    txtfile.write("\n\nNumber cells on first image: {0}".format(len(cells[0])))
+
+    # number adherent cells on each image
+    print("\nNumber adherent cells on each image: \n")
+    txtfile.write("\n\nNumber adherent cells on each image: \n")
+    for i in range(len(nr_adherent_cells_on_img)):
+        print("    Image {0}:  {1}".format(i, nr_adherent_cells_on_img[i]))
+        txtfile.write("\n    Image {0}:  {1} ".format(i, nr_adherent_cells_on_img[i]))
+
+    # adherent cells
+    print("\n\nAdherent cells: \n")
+    txtfile.write("\n\nAdherent cells: \n\n")
+    for i in range(len(adherent_cells)):
+        print("    {0}".format(adherent_cells[i]))
+        txtfile.write("    {0}".format(adherent_cells[i].__str__()))
+        txtfile.write("\n")
+
+    # number generated AdherentCell objects
+    print("\nCreated AdherentCell-objects: ", AdherentCell.get_adherent_cellcounter())
+    txtfile.write("\n\nCreated AdherentCell-objects: {0}\n".format(AdherentCell.get_adherent_cellcounter()))
+
+    print("\n__________________________________________________________________________________________\n\n")
+    txtfile.write("\n\n__________________________________________________________________________________________\n\n")
+
+
+def save_confluence_in_txtfile(txtfile, mask_name, confluence):
+    print("Confluence: {0}% \n\n".format(confluence))
+    txtfile.write("\n\n\nConfluence (Used background mask: {0}): {1}% \n\n\n".format(mask_name, confluence))
+
+
+def show_and_save_result_imgs(imgs, path, name):
+    # show images and save them in the directory under a given name
+    if isinstance(imgs, list):
+        for i in range(len(imgs)):
+            skimage.io.imshow(imgs[i])
+            skimage.io.show()
+            filename = name + str(i) + ".jpg"
+            skimage.io.imsave(os.path.join(path, filename), skimage.util.img_as_ubyte(imgs[i]))
+    else:
+        skimage.io.imshow(imgs)
+        skimage.io.show()
+        filename = name + ".jpg"
+        skimage.io.imsave(os.path.join(path, filename), skimage.util.img_as_ubyte(imgs))
+
+
+def number_adh_on_image_to_csv(nr_adherent_cells_on_img, path):
+    # saves the nr_adherent_cells_on_img ('int'-list) in csv file
+    with open(path, 'w', newline='') as csv_1:
+        csv_out = csv.writer(csv_1)
+        csv_out.writerows([nr_adherent_cells_on_img[index]] for index in range(0, len(nr_adherent_cells_on_img)))
+
+
+def celladhesion_to_csv(confluence, nr_adherent_cells, nr_on_first, nr_adherent_cells_filtered, nr_on_first_filtered,
+                        path):
+    with open(path, 'w') as csv_1:
+        csv_out = csv.writer(csv_1)
+        csv_out.writerow(['Confl', 'adhC', 'Cfirst', 'adhC/Cfirst', 'adhC_filter', 'Cfirst_filter',
+                          'adhC/Cfirst_filter'])
+        csv_out.writerow([str(confluence).replace('.', ','), str(nr_adherent_cells), str(nr_on_first),
+                          str(round(nr_adherent_cells / nr_on_first, 2)).replace('.', ','),
+                          str(nr_adherent_cells_filtered), str(nr_on_first_filtered),
+                          str(round(nr_adherent_cells_filtered / nr_on_first_filtered, 2)).replace('.', ',')])
+    csv_1.close()
+
+
+def intensities_to_csv(intensity, path):
+
+    with open(path, 'w') as csv_1:
+        csv_out = csv.writer(csv_1)
+        # single image, no background mask
+        if isinstance(intensity, float):
+            csv_out.writerow(['Intensity'])
+            csv_out.writerow([str(intensity).replace('.', ',')])
+        # single image, background mask
+        elif isinstance(intensity, dict):
+            csv_out.writerow(['Confluence', 'Intensity Mask', 'Intensity Rest', 'Diff.', 'Diff. Norm.'])
+            csv_out.writerow([str(intensity["confluence"]).replace('.', ','),
+                              str(intensity["mask"]).replace('.', ','),
+                              str(intensity["rest"]).replace('.', ','),
+                              str(intensity["mask"] - intensity["rest"]).replace('.', ','),
+                              str((intensity["mask"] - intensity["rest"]) / (intensity["mask"] + intensity["rest"])).replace('.', ',')])
+        # multiple images
+        else:
+            # no background mask
+            if isinstance(intensity[0], float):
+                csv_out.writerow(['Image Nr.', 'Intensity'])
+                for i in range(len(intensity)):
+                    csv_out.writerow([i, intensity[i]])
+                csv_out.writerow([''])
+                csv_out.writerow(['Images', 'Intensity Diff.'])
+                for i in range(len(intensity) - 1):
+                    csv_out.writerow([str(i + 1) + ' - ' + str(i),
+                                      intensity[i + 1] - intensity[i]])
+            # background mask
+            else:
+                # create lists for the results (simplify writing to the csv file)
+                confluence = list()
+                mask = list()
+                rest = list()
+                diff = list()
+                diff_norm = list()
+
+                csv_out.writerow(['Image Nr.', 'Confluence', 'Intensity Mask', 'Intensity Rest', 'Diff.', 'Diff. Norm.'])
+                for i in range(len(intensity)):
+                    # add results to the lists
+                    confluence.append(intensity[i]["confluence"])
+                    mask.append(intensity[i]["mask"])
+                    rest.append(intensity[i]["rest"])
+                    diff.append(mask[i] - rest[i])
+                    diff_norm.append((mask[i] - rest[i]) / (mask[i] + rest[i]))
+                    csv_out.writerow([i,
+                                      str(confluence[i]).replace('.', ','),
+                                      str(mask[i]).replace('.', ','),
+                                      str(rest[i]).replace('.', ','),
+                                      str(diff[i]).replace('.', ','),
+                                      str(diff_norm[i]).replace('.', ',')])
+                csv_out.writerow([''])
+                csv_out.writerow(['Images', 'Intensity Diff.', 'Intensity Diff. Norm.'])
+                for i in range(len(intensity) - 1):
+                    csv_out.writerow([str(i + 1) + ' - ' + str(i),
+                                      str(diff[i + 1] - diff[i]).replace('.', ','),
+                                      str(diff_norm[i + 1] - diff_norm[i]).replace('.', ',')])
+
+    csv_1.close()
+
+# --- End of programrun_functions.py ---
