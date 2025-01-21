@@ -1,0 +1,60 @@
+from PIL import Image
+import numpy as np
+from tkinter import Tk
+from tkinter.filedialog import askdirectory
+import os
+import matplotlib.pyplot as plt
+import csv
+import time
+import pandas as pd
+import re
+
+timestr = time.strftime("%Y-%m-%d-%H-%M-%S")
+
+rootdir = askdirectory(title='Select Folder')
+print(rootdir)
+
+for dirs in os.listdir(rootdir):
+    if os.path.isdir(os.path.join(rootdir, dirs)):
+        
+        foldername = os.path.basename(os.path.normpath(dirs))
+        
+        df=pd.DataFrame()
+        
+        dfname = './' + foldername + '_' + timestr + '.csv'
+        
+        length = np.arange(0, 634.88, 0.62)
+        
+        df['Abstand'] = length
+        
+        
+        for files in os.listdir(os.path.join(rootdir, dirs)):
+                
+            filename = os.path.join(dirs, files)
+            print(filename)
+            
+            if files.endswith(".jpg"):
+                img = Image.open(filename).convert('L')
+                filename = os.path.basename(filename)
+                number = re.findall(r'\d+', filename)
+                time = (int(number[0]) * 15) - 15
+                new_filename = str(time).zfill(3) + ' s'
+                WIDTH, HEIGHT = img.size
+                pix = img.load()
+                data = np.asarray(img.getdata())
+                data = data.reshape((HEIGHT,WIDTH))
+                reduced_data = data.mean(axis=1)
+                maximum = max(reduced_data)
+                reduced_data[:] = [x / maximum for x in reduced_data]
+                reduced_data = reduced_data[::-1]
+                #filename = os.path.basename(filename)
+                df[new_filename] = reduced_data.flatten()
+                #df = df.join(pd.DataFrame(reduced_data, columns = [filename]))
+                #if not os.path.exists(dfname):
+                    #with open(csvname, 'w', neewline='') as file:
+                        #spamwriter = csv.writer(file, delimiter = ',')
+                    
+        df = df.sort_index(axis = 1)
+        first_column = df.pop('Abstand')
+        df.insert(0, 'Abstand', first_column)
+        df.to_csv (dfname, index = False, header = True)
